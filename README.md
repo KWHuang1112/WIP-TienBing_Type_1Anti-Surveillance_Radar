@@ -14,4 +14,10 @@
 電路原理圖如下：
 ![](Radar.png)
 
-之後分別撰寫ESP32韌體以及可在電腦端執行之檔案。
+組裝完成之後，分別撰寫並燒錄ESP32韌體(*Radar_New_02_AP4_7_2.ino*)，以及準備可在電腦端執行之檔案(*screenSwitcher.py* & *start.bat*)後即可。
+
+示意圖如下：
+![](https://github.com/KWHuang1112/WIP-TienBing_Type_1Anti-Surveillance_Radar/blob/main/%E7%A4%BA%E6%84%8F%E5%9C%961.jpg)
+![](https://github.com/KWHuang1112/WIP-TienBing_Type_1Anti-Surveillance_Radar/blob/main/%E7%A4%BA%E6%84%8F%E5%9C%962.jpg)
+電腦端介面如下：
+![](https://github.com/KWHuang1112/WIP-TienBing_Type_1Anti-Surveillance_Radar/blob/main/%E7%A4%BA%E6%84%8F%E5%9C%962.png)
