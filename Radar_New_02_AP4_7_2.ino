@@ -4,7 +4,26 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
 #include <ESP32Servo.h>
-#include <HTTPClient.h>// screen switch
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+    };
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+    }
+};
 
 #define TFT_CS 7
 #define TFT_DC 2
@@ -15,7 +34,7 @@
 #define ECHO_PIN 1
 #define SERVO_PIN 10
 
-const char* ssid = "Radar_System";
+const char* ssid = "快逃…地球是很危險的";
 const char* password = "password123";
 
 // 在 loop() 外宣告變數防止重複觸發
@@ -120,17 +139,51 @@ String getHTML() {
   return R"rawhtml(<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{background:#000;color:#0f0;font-family:monospace;text-align:center;user-select:none;-webkit-user-select:none;}canvas{background:#000;border:1px solid #030;width:95vw;max-width:500px;border-radius:50% 50% 0 0;touch-action:none;}button{background:#030;color:#0f0;border:1px solid #0f0;padding:5px 15px;margin-top:10px;cursor:pointer;font-family:monospace;}input[type=range]{width:90%;max-width:400px;margin:15px 0;accent-color:#0f0;}</style></head><body><h3>400CM RADAR MONITOR</h3><canvas id='c' width='500' height='280'></canvas><div id='i'>ANG: <span id='a'>0</span> | DST: <span id='d'>0</span>cm</div><div><button id='btnAuto' onclick='setAuto(!autoMode)'>MODE: AUTO</button></div><div><input type='range' id='s' min='0' max='180' value='90'></div><script>const cvs=document.getElementById('c'),ctx=cvs.getContext('2d'),cx=250,cy=270,rM=250,slider=document.getElementById('s');
 let manualAngle=90,autoMode=true,lastSend=0;
 function setAuto(auto){autoMode=auto;document.getElementById('btnAuto').innerText=auto?'MODE: AUTO':'MODE: MANUAL';fetch('/setMode?auto='+(auto?'true':'false'));}
-slider.addEventListener('input',e=>{if(autoMode)setAuto(false);manualAngle=parseInt(slider.value,10);document.getElementById('a').innerText=manualAngle;let now=Date.now();if(now-lastSend>80){lastSend=now;fetch('/setAngle?val='+manualAngle);}});
+slider.addEventListener('input',e=>{if(autoMode)setAuto(false);manualAngle=parseInt(slider.value,10);let now=Date.now();if(now-lastSend>80){lastSend=now;fetch('/setAngle?val='+manualAngle);}});
 slider.addEventListener('change',e=>{fetch('/setAngle?val='+manualAngle);});
 function draw(){ctx.fillStyle='rgba(0,15,0,0.1)';ctx.fillRect(0,0,500,300);ctx.strokeStyle='#020';for(let r=62.5;r<=rM;r+=62.5){ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,2*Math.PI);ctx.stroke()}}
-setInterval(async()=>{try{let res=await fetch('/data'),j=await res.json();if(autoMode){document.getElementById('a').innerText=j.angle;slider.value=j.angle;}document.getElementById('d').innerText=j.distance;draw();
-let drawAng=autoMode?j.angle:manualAngle;let rad=(180-drawAng)*Math.PI/180;
+async function loopData(){try{let res=await fetch('/data'),j=await res.json();document.getElementById('a').innerText=j.angle;if(autoMode)slider.value=j.angle;document.getElementById('d').innerText=j.distance;draw();
+let drawAng=j.angle;let rad=(180-drawAng)*Math.PI/180;
 let lx=cx-Math.cos(rad)*rM,ly=cy-Math.sin(rad)*rM;ctx.strokeStyle='#0f0';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(lx,ly);ctx.stroke();
-if(j.distance<395){let tx=cx-Math.cos(rad)*(j.distance*0.625),ty=cy-Math.sin(rad)*(j.distance*0.625);ctx.fillStyle='#f00';ctx.beginPath();ctx.arc(tx,ty,6,0,7);ctx.fill()}}catch(e){}},50);</script></body></html>)rawhtml";
+if(j.distance<395){let tx=cx-Math.cos(rad)*(j.distance*0.625),ty=cy-Math.sin(rad)*(j.distance*0.625);ctx.fillStyle='#f00';ctx.beginPath();ctx.arc(tx,ty,6,0,7);ctx.fill()}}catch(e){}setTimeout(loopData,50);}
+loopData();</script></body></html>)rawhtml";
+}
+
+void triggerBossTask(void * pvParameters) {
+  // 檢查是否已經有裝置透過藍牙連上
+  if (deviceConnected) {
+    pCharacteristic->setValue("TRIGGER");
+    pCharacteristic->notify();
+    Serial.println("BLE 觸發指令已發送");
+  } else {
+    Serial.println("BLE 未連線，無法發送觸發指令");
+  }
+  vTaskDelete(NULL);
 }
 
 void setup() {
   Serial.begin(115200);
+
+  // 啟動 BLE 裝置
+  BLEDevice::init("Radar_BossKey");
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+  pService->start();
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x0);
+  BLEDevice::startAdvertising();
+  Serial.println("BLE 等待連線中...");
+
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   tft.initR(INITR_BLACKTAB);
@@ -222,7 +275,7 @@ void loop() {
   tft.setTextColor(ST7735_CYAN, ST7735_BLACK);
   tft.print("Link: 192.168.4.1");
 
-  if (angle % 24 == 0) { //6 的倍數，每 4 步更新一次文字
+  if (angle % 30 == 0) { //6 的倍數，每 5 步更新一次文字
     tft.setCursor(0, 10);
     tft.setTextColor(ST7735_GREEN, ST7735_BLACK);
     tft.printf("ANG:%3d DST:%3dcm  ", currentAngle, currentDistance);
@@ -240,17 +293,7 @@ void loop() {
       tft.setTextColor(ST7735_WHITE);
       tft.print("Warning!");
 
-      HTTPClient http;
-      http.begin("http://192.168.4.2:5000/trigger"); 
-      http.setTimeout(1500); 
-      int httpCode = http.GET();
-      
-      if (httpCode > 0) {
-        Serial.printf("發送成功: %d\n", httpCode);
-      } else {
-        Serial.printf("發送失敗: %s\n", http.errorToString(httpCode).c_str());
-      }
-      http.end();
+      xTaskCreate(triggerBossTask, "BossTask", 4096, NULL, 1, NULL);
       
       pcIsTriggered = true;
       lastTriggerTime = millis();
@@ -261,6 +304,18 @@ void loop() {
       tft.fillRect(0, 25, 160, 15, ST7735_BLACK); // 清除警告文字
       pcIsTriggered = false;
     }
+  }
+
+  // 處理 BLE 斷線後重新廣播
+  if (!deviceConnected && oldDeviceConnected) {
+      delay(500); // 留一點時間給 BLE 協議棧準備
+      pServer->startAdvertising(); // 重新開始廣播
+      Serial.println("重新開始廣播 BLE");
+      oldDeviceConnected = deviceConnected;
+  }
+  // 處理 BLE 連線狀態更新
+  if (deviceConnected && !oldDeviceConnected) {
+      oldDeviceConnected = deviceConnected;
   }
 
   // 6. 系統處理
